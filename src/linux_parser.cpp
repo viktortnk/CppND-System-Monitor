@@ -32,32 +32,6 @@ static inline void ltrim(std::string& s) {
           }));
 }
 
-// trim from end (in place)
-static inline void rtrim(std::string& s) {
-  s.erase(std::find_if(s.rbegin(), s.rend(),
-                       [](unsigned char ch) { return !std::isspace(ch); })
-              .base(),
-          s.end());
-}
-
-// trim from both ends (in place)
-static inline void trim(std::string& s) {
-  ltrim(s);
-  rtrim(s);
-}
-
-// trim from start (copying)
-static inline std::string ltrim_copy(std::string s) {
-  ltrim(s);
-  return s;
-}
-
-// trim from end (copying)
-static inline std::string rtrim_copy(std::string s) {
-  rtrim(s);
-  return s;
-}
-
 static inline std::pair<string, string> split2(const string& s,
                                                const char& delimiter) {
   size_t pos = s.find(delimiter);
@@ -75,7 +49,9 @@ StringMap FileToMap(const string& path, const char& delimiter) {
   if (filestream.is_open()) {
     string line;
     while (std::getline(filestream, line)) {
-      auto [key, value] = split2(line, delimiter);
+      auto kv = split2(line, delimiter);
+      auto key = kv.first;
+      auto value = kv.second;
       ltrim(value);
       map[key] = value;
     }
