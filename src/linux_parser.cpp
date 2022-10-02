@@ -109,6 +109,14 @@ vector<string> tokenize(const string& s, const char& delimiter = ' ') {
   return tokens;
 }
 
+const string kProcesses("processes");
+const string kProcsRunning("procs_running");
+const string kMemTotal("MemTotal");
+const string kMemFree("MemFree");
+const string kCpu("cpu");
+const string kUid("Uid");
+const string kVmRSS("VmRSS");
+
 }  // namespace
 
 // DONE: An example of how to read data from the filesystem
@@ -169,8 +177,8 @@ vector<int> LinuxParser::Pids() {
 
 float LinuxParser::MemoryUtilization() {
   auto map = FileToMap(kProcDirectory + kMeminfoFilename, ':');
-  string mem_total_str = map["MemTotal"];
-  string mem_free_str = map["MemFree"];
+  string mem_total_str = map[kMemTotal];
+  string mem_free_str = map[kMemFree];
   auto mem_total = stof(split2(mem_total_str, ' ').first);
   auto mem_free = stof(split2(mem_free_str, ' ').first);
 
@@ -191,12 +199,12 @@ CpuTicks LinuxParser::CpuTicks() {
 
 int LinuxParser::TotalProcesses() {
   auto map = FileToMap(kProcDirectory + kStatFilename, ' ');
-  return stoi(map["processes"]);
+  return stoi(map[kProcesses]);
 }
 
 int LinuxParser::RunningProcesses() {
   auto map = FileToMap(kProcDirectory + kStatFilename, ' ');
-  return stoi(map["procs_running"]);
+  return stoi(map[kProcsRunning]);
 }
 
 ProcessCpuStats LinuxParser::CpuStats(int pid) {
@@ -220,7 +228,7 @@ string LinuxParser::Command(int pid) {
 // NOTE: using 'VmRSS' (not virtual memory size 'VmSize')
 string LinuxParser::Ram(int pid) {
   auto map = FileToMap(proc_pid_path(pid, kStatusFilename), ':');
-  std::stringstream ss(map["VmRSS"]);
+  std::stringstream ss(map[kVmRSS]);
   int ram_kb;
   if (ss >> ram_kb) {
     return to_string(ram_kb / 1024);
@@ -231,7 +239,7 @@ string LinuxParser::Ram(int pid) {
 
 string LinuxParser::Uid(int pid) {
   auto map = FileToMap(proc_pid_path(pid, kStatusFilename), ':');
-  auto uid_str = map["Uid"];
+  auto uid_str = map[kUid];
   std::istringstream ss{uid_str};
   string uid;
   ss >> uid;
