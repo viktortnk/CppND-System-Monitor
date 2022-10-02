@@ -252,16 +252,13 @@ string LinuxParser::User(int pid) {
     }
   }
 
-  return "uid:" + uid;
+  return string();
 }
 
 long LinuxParser::UpTime(int pid) {
   auto uptime_str = FileContent(proc_pid_path(pid, kStatFilename));
-  std::stringstream ss{uptime_str};
-  string value;
-  int i = 0;
-  while (ss >> value && i < 22) {
-    i++;
-  }
-  return std::stol(value);
+  auto tokens = tokenize(uptime_str);
+  long clock_ticks = stol(tokens[21]);
+  long hertz = sysconf(_SC_CLK_TCK);
+  return UpTime() - clock_ticks / hertz;
 }
