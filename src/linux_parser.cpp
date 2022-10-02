@@ -217,9 +217,10 @@ string LinuxParser::Command(int pid) {
   return FileContent(proc_pid_path(pid, kCmdlineFilename));
 }
 
+// NOTE: using 'VmRSS' (not virtual memory size 'VmSize')
 string LinuxParser::Ram(int pid) {
   auto map = FileToMap(proc_pid_path(pid, kStatusFilename), ':');
-  std::stringstream ss(map["VmSize"]);
+  std::stringstream ss(map["VmRSS"]);
   int ram_kb;
   if (ss >> ram_kb) {
     return to_string(ram_kb / 1024);
