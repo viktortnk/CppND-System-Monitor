@@ -1,15 +1,139 @@
-#include <dirent.h>
-#include <unistd.h>
-#include <sstream>
-#include <string>
-#include <vector>
-
 #include "linux_parser.h"
 
+#include <dirent.h>
+#include <unistd.h>
+
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "cpu_ticks.h"
+#include "process.h"
+#include "process_cpu_stats.h"
+
 using std::stof;
+using std::stoi;
 using std::string;
 using std::to_string;
 using std::vector;
+
+using StringMap = std::unordered_map<string, string>;
+
+namespace {
+
+// trim from start (in place)
+static inline void ltrim(std::string& s) {
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
+}
+
+// trim from end (in place)
+static inline void rtrim(std::string& s) {
+  s.erase(std::find_if(s.rbegin(), s.rend(),
+                       [](unsigned char ch) { return !std::isspace(ch); })
+              .base(),
+          s.end());
+}
+
+// trim from both ends (in place)
+static inline void trim(std::string& s) {
+  ltrim(s);
+  rtrim(s);
+}
+
+// trim from start (copying)
+static inline std::string ltrim_copy(std::string s) {
+  ltrim(s);
+  return s;
+}
+
+// trim from end (copying)
+static inline std::string rtrim_copy(std::string s) {
+  rtrim(s);
+  return s;
+}
+
+static inline std::pair<string, string> split2(const string& s,
+                                               const char& delimiter) {
+  size_t pos = s.find(delimiter);
+  if (pos != string::npos) {
+    return {s.substr(0, pos), s.substr(pos + 1)};
+  } else {
+    return {s.substr(), ""};
+  }
+}
+
+StringMap FileToMap(const string& path, const char& delimiter) {
+  StringMap map;
+  std::ifstream filestream{path};
+
+  if (filestream.is_open()) {
+    string line;
+    while (std::getline(filestream, line)) {
+      auto [key, value] = split2(line, delimiter);
+      ltrim(value);
+      map[key] = value;
+    }
+  }
+
+  return map;
+}
+
+string FileContent(const string& path) {
+  std::ifstream f(path);
+  if (f.is_open()) {
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
+  } else {
+    return string{};
+  }
+}
+
+CpuTicks ParseCpuTicks(const string& s) {
+  CpuTicks c;
+  if (s.rfind("cpu ", 0) != string::npos) {
+    string xs = s.substr(4);
+    ltrim(xs);
+    std::stringstream ss{xs};
+    while (ss >> c.user >> c.nice >> c.system >> c.idle >> c.iowait >> c.irq >>
+           c.softirq >> c.steal >> c.guest >> c.guest_nice) {
+    }
+  }
+  return c;
+}
+
+CpuTicks LoadCpuTicks(const string& path) {
+  CpuTicks c;
+  std::ifstream f(path);
+  if (f.is_open()) {
+    string s;
+    std::getline(f, s);
+    c = ParseCpuTicks(s);
+  }
+  return c;
+}
+
+string proc_pid_path(int pid, const string& path) {
+  return LinuxParser::kProcDirectory + to_string(pid) + path;
+}
+
+vector<string> tokenize(const string& s, const char& delimiter = ' ') {
+  std::stringstream linestream(s);
+  vector<string> tokens;
+  string temp;
+  while (std::getline(linestream, temp, delimiter)) {
+    tokens.push_back(temp);
+  }
+  return tokens;
+}
+
+}  // namespace
 
 // DONE: An example of how to read data from the filesystem
 string LinuxParser::OperatingSystem() {
@@ -67,50 +191,100 @@ vector<int> LinuxParser::Pids() {
   return pids;
 }
 
-// TODO: Read and return the system memory utilization
-float LinuxParser::MemoryUtilization() { return 0.0; }
+float LinuxParser::MemoryUtilization() {
+  auto map = FileToMap(kProcDirectory + kMeminfoFilename, ':');
+  string mem_total_str = map["MemTotal"];
+  string mem_free_str = map["MemFree"];
+  auto mem_total = stof(split2(mem_total_str, ' ').first);
+  auto mem_free = stof(split2(mem_free_str, ' ').first);
 
-// TODO: Read and return the system uptime
-long LinuxParser::UpTime() { return 0; }
+  return (mem_total - mem_free) / mem_total;
+}
 
-// TODO: Read and return the number of jiffies for the system
-long LinuxParser::Jiffies() { return 0; }
+long LinuxParser::UpTime() {
+  string uptime_str = FileContent(kProcDirectory + kUptimeFilename);
+  std::stringstream ss{uptime_str};
+  double uptime;
+  ss >> uptime;
+  return long(uptime);
+}
 
-// TODO: Read and return the number of active jiffies for a PID
-// REMOVE: [[maybe_unused]] once you define the function
-long LinuxParser::ActiveJiffies(int pid[[maybe_unused]]) { return 0; }
+CpuTicks LinuxParser::CpuTicks() {
+  return LoadCpuTicks(kProcDirectory + kStatFilename);
+}
 
-// TODO: Read and return the number of active jiffies for the system
-long LinuxParser::ActiveJiffies() { return 0; }
+int LinuxParser::TotalProcesses() {
+  auto map = FileToMap(kProcDirectory + kStatFilename, ' ');
+  return stoi(map["processes"]);
+}
 
-// TODO: Read and return the number of idle jiffies for the system
-long LinuxParser::IdleJiffies() { return 0; }
+int LinuxParser::RunningProcesses() {
+  auto map = FileToMap(kProcDirectory + kStatFilename, ' ');
+  return stoi(map["procs_running"]);
+}
 
-// TODO: Read and return CPU utilization
-vector<string> LinuxParser::CpuUtilization() { return {}; }
+ProcessCpuStats LinuxParser::CpuStats(int pid) {
+  ProcessCpuStats s;
+  auto content = FileContent(proc_pid_path(pid, LinuxParser::kStatFilename));
+  auto tokens = tokenize(content);
+  if (tokens.size() > 21) {
+    s.utime = stol(tokens[13]);
+    s.stime = stol(tokens[14]);
+    s.cutime = stol(tokens[15]);
+    s.cstime = stol(tokens[16]);
+    s.starttime = stol(tokens[21]);
+  }
+  return s;
+}
 
-// TODO: Read and return the total number of processes
-int LinuxParser::TotalProcesses() { return 0; }
+string LinuxParser::Command(int pid) {
+  return FileContent(proc_pid_path(pid, kCmdlineFilename));
+}
 
-// TODO: Read and return the number of running processes
-int LinuxParser::RunningProcesses() { return 0; }
+string LinuxParser::Ram(int pid) {
+  auto map = FileToMap(proc_pid_path(pid, kStatusFilename), ':');
+  std::stringstream ss(map["VmSize"]);
+  int ram_kb;
+  if (ss >> ram_kb) {
+    return to_string(ram_kb / 1024);
+  } else {
+    return "";
+  }
+}
 
-// TODO: Read and return the command associated with a process
-// REMOVE: [[maybe_unused]] once you define the function
-string LinuxParser::Command(int pid[[maybe_unused]]) { return string(); }
+string LinuxParser::Uid(int pid) {
+  auto map = FileToMap(proc_pid_path(pid, kStatusFilename), ':');
+  auto uid_str = map["Uid"];
+  std::istringstream ss{uid_str};
+  string uid;
+  ss >> uid;
+  return uid;
+}
 
-// TODO: Read and return the memory used by a process
-// REMOVE: [[maybe_unused]] once you define the function
-string LinuxParser::Ram(int pid[[maybe_unused]]) { return string(); }
+string LinuxParser::User(int pid) {
+  string uid = Uid(pid);
 
-// TODO: Read and return the user ID associated with a process
-// REMOVE: [[maybe_unused]] once you define the function
-string LinuxParser::Uid(int pid[[maybe_unused]]) { return string(); }
+  string line;
+  std::ifstream filestream(kPasswordPath);
+  if (filestream.is_open()) {
+    while (std::getline(filestream, line)) {
+      vector<string> tokens = tokenize(line, ':');
+      if (tokens.size() > 2 && tokens[2] == uid) {
+        return tokens[0];
+      }
+    }
+  }
 
-// TODO: Read and return the user associated with a process
-// REMOVE: [[maybe_unused]] once you define the function
-string LinuxParser::User(int pid[[maybe_unused]]) { return string(); }
+  return "uid:" + uid;
+}
 
-// TODO: Read and return the uptime of a process
-// REMOVE: [[maybe_unused]] once you define the function
-long LinuxParser::UpTime(int pid[[maybe_unused]]) { return 0; }
+long LinuxParser::UpTime(int pid) {
+  auto uptime_str = FileContent(proc_pid_path(pid, kStatFilename));
+  std::stringstream ss{uptime_str};
+  string value;
+  int i = 0;
+  while (ss >> value && i < 22) {
+    i++;
+  }
+  return std::stol(value);
+}
